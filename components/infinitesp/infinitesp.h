@@ -112,6 +112,19 @@ static const uint16_t REG_TSTAT_VACATION_STATE = 0x3B04;
 // the slow-poll backoff removes it there. Fetched by the SAM slow
 // poll or passively observed when another master polls it.
 static const uint16_t REG_TSTAT_ZONETEMPS = 0x3D02;
+// Smart Sensor / secondary Infinity UI presence probe (Infinitude wiki:
+// 0x041E). The main control polls 0x21-0x28 (zone 2 -> 0x22, etc.) during
+// normal operation; payload carries room temp and setpoint hints when 3B02 is
+// empty on Next Gen (SYSTXCCITN*) SAM reads.
+static const uint16_t REG_TSTAT_PROBE = 0x041E;
+static const uint8_t ADDR_AUX_ZONE_MIN = 0x21;
+static const uint8_t ADDR_AUX_ZONE_MAX = 0x28;
+static const uint32_t AUX_ZONE_TEMP_FRESHNESS_MS = 2UL * 60UL * 1000UL;
+static inline uint8_t aux_addr_for_zone(uint8_t zone) {
+  if (zone < 2)
+    return 0;
+  return (uint8_t) (ADDR_THERMOSTAT + zone);
+}
 // Served-3B04 freshness window: ~4 missed slow-poll rotations (10-slot
 // rotation at 31 s/slot). Beyond it the preset detector falls back to the
 // setpoint-match heuristic and the number keeps its last value.
@@ -787,8 +800,19 @@ class InfinitESPComponent : public Component, public uart::UARTDevice {
   // One-shot diagnostics: log the per-zone flags bytes at the first served
   // 3D02 reply (feeds the 0x0101/0x0104 source-type question).
   bool tstat_3d02_served_logged_{false};
-  // 3B02 byte 0: bitmask of commissioned zones (bit zone-1). 0 when unreadable.
+  // climate: blocks OR'd at codegen (zone N -> bit N-1).
+  uint8_t declared_zone_mask_{0};
+  mutable bool aux_zone_temp_logged_{false};
+  // 3B02 byte 0: bitmask of commissioned zones (bit zone-1). When the tstat
+  // leaves SAM 3B02/3B03 empty (Next Gen ITN*), falls back to declared_zone_mask_
+  // from climate: blocks, then ZC 0319 feedback.
   uint8_t get_zone_active_mask() const;
+  bool zone_is_active(uint8_t zone) const;
+  void declare_zone(uint8_t zone);
+  // Zone 2+ room temp from aux UI / Smart Sensor 0x041E at 0x20+zone.
+  float aux_zone_temp_c_(uint8_t zone) const;
+  // Best-effort room temp: 3B02, then 3D02, then aux 041E.
+  float zone_room_temp_c_(uint8_t zone) const;
   bool is_bus_online() const { return bus_online_; }
   bool has_real_state() const { return sam_state_received_; }
 

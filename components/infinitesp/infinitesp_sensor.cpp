@@ -102,26 +102,19 @@ void InfinitESPSensor::on_register_update(uint8_t device_addr, uint16_t register
         value = parent_->bus_temp_to_celsius((float) data->at(REG3B02_OUTDOOR_TEMP));
       }
     } else if (sensor_type_ == "temperature") {
-      uint8_t idx = zone_ - 1;
-      if (data->at(REG3B02_ACTIVE_ZONES) & (1 << idx)) {
-        value = parent_->bus_temp_to_celsius((float) data->at(REG3B02_TEMPS + idx));
-        // Issue #53: prefer 3D02's raw 1/16 °F reading when the tstat serves
-        // that register. The 3B02 byte is quantized to the display unit
-        // (whole °C in °C mode), which staircases HA history while the cloud
-        // shows 0.5 °C steps. ITC-line controls refuse 3D02 (dropped by the
-        // poll backoff) and keep this fallback forever. The 5 °C divergence
-        // guard protects against wrong-unit semantics on serving °C tstats,
-        // which is unverified until a °C rig serves the register.
-        float fine = parent_->tstat_zone_temp_c_(zone_);
-        if (!std::isnan(fine) && std::fabs(fine - value) <= 5.0f)
-          value = fine;
-      }
+      if (parent_->zone_is_active(zone_))
+        value = parent_->zone_room_temp_c_(zone_);
     } else if (sensor_type_ == "humidity") {
       uint8_t idx = zone_ - 1;
-      if (data->at(REG3B02_ACTIVE_ZONES) & (1 << idx)) {
+      if (parent_->zone_is_active(zone_) && data->size() > REG3B02_HUMIDITY + idx) {
         value = (float) data->at(REG3B02_HUMIDITY + idx);
       }
     }
+  }
+
+  if (sensor_type_ == "temperature" && register_key == REG_TSTAT_PROBE &&
+      device_addr == aux_addr_for_zone(zone_)) {
+    value = parent_->zone_room_temp_c_(zone_);
   }
 
   // fault_timestamp: state = epoch time the newest fault-log entry was logged

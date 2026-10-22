@@ -913,6 +913,20 @@ void InfinitESPComponent::handle_passive_frame_() {
       ESP_LOGD("InfinitESP", "ZC %02X %04X reply captured (%u bytes)", zc_src, zc_key, zc_data.size());
       notify_entities_(zc_src, zc_key);
     }
+
+    // Aux zone UI / Smart Sensor slots 0x21-0x28 (zone N at 0x20+N). The
+    // thermostat polls 041E here; Next Gen controls keep SAM 3B02 empty.
+    if (current_frame_.src >= ADDR_AUX_ZONE_MIN && current_frame_.src <= ADDR_AUX_ZONE_MAX) {
+      uint8_t table = current_frame_.payload[1];
+      uint8_t row = current_frame_.payload[2];
+      uint16_t reg_key = (table << 8) | row;
+      std::vector<uint8_t> aux_data(current_frame_.payload.begin() + 3,
+                                    current_frame_.payload.end());
+      store_register_(current_frame_.src, reg_key, aux_data);
+      ESP_LOGD("InfinitESP", "AUX %02X %04X reply captured (%u bytes)", current_frame_.src, reg_key,
+               aux_data.size());
+      notify_entities_(current_frame_.src, reg_key);
+    }
   }
 
   // Handle broadcast WRITE frames from thermostat (3B0E activity, 3B02 state/time, etc.)
@@ -1846,9 +1860,117 @@ const std::vector<uint8_t> *InfinitESPComponent::get_odu_register(uint16_t key) 
 
 uint8_t InfinitESPComponent::get_zone_active_mask() const {
   auto *state = get_register(sam_address_, REG_SAM_STATE);
-  if (state && state->size() > REG3B02_ACTIVE_ZONES)
-    return state->at(REG3B02_ACTIVE_ZONES);
+  if (state && state->size() > REG3B02_ACTIVE_ZONES) {
+    uint8_t mask = state->at(REG3B02_ACTIVE_ZONES);
+    if (mask != 0)
+      return mask;
+  }
+  auto *zones = get_register(sam_address_, REG_SAM_ZONES);
+  if (zones && zones->size() > REG3B03_ACTIVE_ZONES) {
+    uint8_t mask = zones->at(REG3B03_ACTIVE_ZONES);
+    if (mask != 0)
+      return mask;
+  }
+  if (declared_zone_mask_ != 0)
+    return declared_zone_mask_;
+  // Primary ZC 0319: damper feedback bytes 0-3 are 0x00-0x0F when the zone
+  // exists on this controller (0xFF = unpopulated on secondary controllers).
+  auto *cfg = get_register(zc_addr_for_zone_(1), REG_ZC_ZONE_CONFIG);
+  if (cfg && cfg->size() >= 4) {
+    uint8_t inferred = 0;
+    for (uint8_t i = 0; i < 4; i++) {
+      if ((*cfg)[i] != 0xFF)
+        inferred |= (uint8_t) (1 << i);
+    }
+    if (inferred != 0)
+      return inferred;
+  }
   return 0;
+}
+
+bool InfinitESPComponent::zone_is_active(uint8_t zone) const {
+  if (zone < 1 || zone > 8)
+    return false;
+  uint8_t mask = get_zone_active_mask();
+  if (mask == 0)
+    return zone == 1;
+  return (mask & (1 << (zone - 1))) != 0;
+}
+
+void InfinitESPComponent::declare_zone(uint8_t zone) {
+  if (zone >= 1 && zone <= 8)
+    declared_zone_mask_ |= (uint8_t) (1 << (zone - 1));
+}
+
+float InfinitESPComponent::aux_zone_temp_c_(uint8_t zone) const {
+  if (zone < 2)
+    return NAN;
+  uint8_t addr = aux_addr_for_zone(zone);
+  auto *data = get_register(addr, REG_TSTAT_PROBE);
+  if (!data || data->size() < 6)
+    return NAN;
+  if (!register_fresh_(addr, REG_TSTAT_PROBE, AUX_ZONE_TEMP_FRESHNESS_MS))
+    return NAN;
+  // Verified on SYSTXCCITN01 + Smart Sensor at 0x22: whole °F at offsets 5 and
+  // 10 (display/smoothed), with high-res u16/16 at offset 4 when in band.
+  auto plausible_f = [](float f) {
+    return f >= ZC_THERMISTOR_MIN_F && f <= ZC_THERMISTOR_MAX_F;
+  };
+  auto whole_f = [&](size_t off) -> float {
+    if (off >= data->size())
+      return NAN;
+    uint8_t b = (*data)[off];
+    if (b < 40 || b > 99)
+      return NAN;
+    return (float) b;
+  };
+  // ITN01 + Smart Sensor 041E layout (live 0x22): room temp is a whole °F at
+  // offset 6 (and often repeated at 11). Byte 10 is the cool setpoint (0x62).
+  static const uint8_t kAuxWholeTempOff[] = {6, 11, 5, 10};
+  float f = NAN;
+  for (uint8_t off : kAuxWholeTempOff) {
+    f = whole_f(off);
+    if (plausible_f(f))
+      break;
+  }
+  if (!plausible_f(f)) {
+    uint16_t raw = ((uint16_t) (*data)[4] << 8) | (*data)[5];
+    float fine = (float) raw / 16.0f;
+    if (plausible_f(fine))
+      f = fine;
+  }
+  if (!plausible_f(f))
+    return NAN;
+  return (f - 32.0f) * (5.0f / 9.0f);
+}
+
+float InfinitESPComponent::zone_room_temp_c_(uint8_t zone) const {
+  if (zone < 1 || zone > 8)
+    return NAN;
+  auto *state = get_register(sam_address_, REG_SAM_STATE);
+  if (state && state->size() > REG3B02_TEMPS + zone - 1) {
+    uint8_t raw = state->at(REG3B02_TEMPS + zone - 1);
+    if (raw != 0 && raw != 0xFF) {
+      float temp = bus_temp_to_celsius((float) raw);
+      float fine = tstat_zone_temp_c_(zone);
+      if (!std::isnan(fine) && std::fabs(fine - temp) <= 5.0f)
+        return fine;
+      return temp;
+    }
+  }
+  float fine = tstat_zone_temp_c_(zone);
+  if (!std::isnan(fine))
+    return fine;
+  float aux = aux_zone_temp_c_(zone);
+  if (!std::isnan(aux)) {
+    if (!aux_zone_temp_logged_) {
+      aux_zone_temp_logged_ = true;
+      ESP_LOGI("InfinitESP", "Zone %u temperature: using aux 041E at bus 0x%02X", zone,
+               aux_addr_for_zone(zone));
+    }
+    return aux;
+  }
+  return NAN;
 }
 
 void InfinitESPComponent::queue_hold_set(uint8_t zone, uint16_t minutes, uint32_t debounce_ms) {

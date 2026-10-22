@@ -24,6 +24,8 @@ async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await climate.register_climate(var, config)
     cg.add(var.set_zone(config[CONF_ZONE]))
+    parent = await cg.get_variable(config[CONF_INFINITESP_ID])
+    cg.add(parent.declare_zone(config[CONF_ZONE]))
     await register_infinitesp_entity(var, config)
 
     from .. import auto_entities

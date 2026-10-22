@@ -59,7 +59,7 @@ void InfinitESPSelect::on_register_update(uint8_t device_addr, uint16_t register
     auto *data = parent_->get_register(parent_->get_sam_address(), REG_SAM_ZONES);
     if (data && data->size() >= REG3B03_FAN_MODES + 8) {
       uint8_t idx = zone_ - 1;
-      if (data->at(REG3B03_ACTIVE_ZONES) & (1 << idx)) {
+      if (parent_->zone_is_active(zone_)) {
         uint8_t fan = data->at(REG3B03_FAN_MODES + idx);
         if (fan != current_mode_ && fan <= 3) {
           current_mode_ = fan;

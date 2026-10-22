@@ -337,17 +337,12 @@ void InfinitESPClimate::on_register_update(uint8_t device_addr, uint16_t registe
     auto *data = parent_->get_register(parent_->get_sam_address(), REG_SAM_STATE);
     if (data && data->size() >= REG3B02_STAGMODE + 1) {
       uint8_t idx = zone_ - 1;
-      uint8_t active = data->at(REG3B02_ACTIVE_ZONES);
-      if (!(active & (1 << idx)))
+      if (!parent_->zone_is_active(zone_))
         return;
 
-      float temp_bus = (float)data->at(REG3B02_TEMPS + idx);
-      float temp = parent_->bus_temp_to_celsius(temp_bus);
-      // Issue #53: refine from 3D02 (1/16 °F) when served; same divergence
-      // guard and fallback as the zone temperature sensor.
-      float fine = parent_->tstat_zone_temp_c_(zone_);
-      if (!std::isnan(fine) && std::fabs(fine - temp) <= 5.0f)
-        temp = fine;
+      float temp = parent_->zone_room_temp_c_(zone_);
+      if (std::isnan(temp))
+        return;
       if (temp != current_temp_) {
         current_temp_ = temp;
         this->current_temperature = temp;
@@ -438,12 +433,20 @@ void InfinitESPClimate::on_register_update(uint8_t device_addr, uint16_t registe
     auto *data = parent_->get_register(parent_->get_sam_address(), REG_SAM_ZONES);
     if (data && data->size() >= REG3B03_COOL_SETPOINTS + 8) {
       uint8_t idx = zone_ - 1;
-      uint8_t active = data->at(REG3B03_ACTIVE_ZONES);
-      if (!(active & (1 << idx)))
+      if (!parent_->zone_is_active(zone_))
         return;
 
       uint8_t new_heat = data->at(REG3B03_HEAT_SETPOINTS + idx);
       uint8_t new_cool = data->at(REG3B03_COOL_SETPOINTS + idx);
+      if (new_heat == 0 && new_cool == 0) {
+        uint16_t comfort_reg = comfort_reg_for_zone(zone_);
+        auto *comfort = parent_->get_register(ADDR_THERMOSTAT, comfort_reg);
+        if (comfort && comfort->size() >= COMFORT_ENTRY_SIZE) {
+          uint8_t base = COMFORT_HOME * COMFORT_ENTRY_SIZE;
+          new_heat = (*comfort)[base];
+          new_cool = (*comfort)[base + 1];
+        }
+      }
       uint8_t new_fan = data->at(REG3B03_FAN_MODES + idx);
 
       // Pending setpoint overlay: after a write, suppress stale poll data
@@ -633,6 +636,27 @@ void InfinitESPClimate::on_register_update(uint8_t device_addr, uint16_t registe
       if (sp_changed || hold_changed || preset_changed) {
         changed = true;
       }
+    }
+  }
+
+  if (register_key == REG_TSTAT_PROBE && device_addr == aux_addr_for_zone(zone_)) {
+    float temp = parent_->zone_room_temp_c_(zone_);
+    if (!std::isnan(temp) && temp != current_temp_) {
+      current_temp_ = temp;
+      this->current_temperature = temp;
+      changed = true;
+    }
+  }
+
+  if (register_key == comfort_reg_for_zone(zone_)) {
+    auto *comfort = parent_->get_register(ADDR_THERMOSTAT, register_key);
+    if (comfort && comfort->size() >= COMFORT_ENTRY_SIZE && heat_sp_ == 0 && cool_sp_ == 0) {
+      uint8_t base = COMFORT_HOME * COMFORT_ENTRY_SIZE;
+      heat_sp_ = (*comfort)[base];
+      cool_sp_ = (*comfort)[base + 1];
+      this->target_temperature_low = parent_->setpoint_to_celsius(heat_sp_);
+      this->target_temperature_high = parent_->setpoint_to_celsius(cool_sp_);
+      changed = true;
     }
   }
 

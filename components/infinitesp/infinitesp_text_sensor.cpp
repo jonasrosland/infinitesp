@@ -88,7 +88,7 @@ void InfinitESPTextSensor::on_register_update(uint8_t device_addr, uint16_t regi
       return;
 
     uint8_t idx = zone_ - 1;
-    if (!(data->at(REG3B03_ACTIVE_ZONES) & (1 << idx)))
+    if (!parent_->zone_is_active(zone_))
       return;
 
     uint16_t hold_dur = parent_->get_zone_hold_duration(zone_);
@@ -117,7 +117,7 @@ void InfinitESPTextSensor::on_register_update(uint8_t device_addr, uint16_t regi
       return;
 
     uint8_t idx = zone_ - 1;
-    if (!(data->at(REG3B03_ACTIVE_ZONES) & (1 << idx)))
+    if (!parent_->zone_is_active(zone_))
       return;
 
     uint16_t name_offset = REG3B03_ZONE_NAMES + (idx * 12);

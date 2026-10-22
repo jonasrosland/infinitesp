@@ -261,12 +261,12 @@ infinitesp:
 climate:
   - platform: infinitesp
     infinitesp_id: infinitesp_hub
-    name: "Zone 1 Climate"
+    name: "First floor"
     zone: 1
-  # - platform: infinitesp
-  #   infinitesp_id: infinitesp_hub
-  #   name: "Zone 2 Climate"
-  #   zone: 2
+  - platform: infinitesp
+    infinitesp_id: infinitesp_hub
+    name: "Second floor"
+    zone: 2
 
 # ──────────────────────────────────────────────
 # Damper covers (zone-controller emulation OR physical ZC)

@@ -821,6 +821,7 @@ class InfinitESPComponent : public Component, public uart::UARTDevice {
   float zone_room_temp_c_(uint8_t zone) const;
   bool is_bus_online() const { return bus_online_; }
   bool has_real_state() const { return sam_state_received_; }
+  bool itn_empty_sam_zones() const { return itn_empty_sam_zones_; }
 
   // Bus unit detection: returns true if bus values are in °C.
   // In AUTO mode, uses heuristic (active zone temp <= 50 → °C).
@@ -1337,6 +1338,11 @@ class InfinitESPComponent : public Component, public uart::UARTDevice {
   uint32_t last_odu_slow_poll_time_{UINT32_MAX - 15500};
   bool bus_online_{false};
   bool sam_state_received_{false};
+  // Thermostat 3B03 polls return all-zero setpoints (Next Gen ITN); mirror merge
+  // and HA writes use table-40 MANUAL + hold instead of trusting poll readback.
+  bool itn_empty_sam_zones_{false};
+  static bool sam_zones_setpoints_unpopulated_(const std::vector<uint8_t> &data);
+  void merge_sam_zones_preserving_setpoints_(std::vector<uint8_t> &incoming) const;
   uint32_t last_reply_time_{0};
 
   // Diagnostics

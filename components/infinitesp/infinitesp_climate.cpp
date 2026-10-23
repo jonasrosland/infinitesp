@@ -117,6 +117,12 @@ void InfinitESPClimate::control(const climate::ClimateCall &call) {
     else if (this->mode == climate::CLIMATE_MODE_COOL)
       this->target_temperature_high = target_c;
     set_pending_setpoint_(heat_sp_, cool_sp_);
+    if (parent_->itn_empty_sam_zones()) {
+      hold_duration_ = InfinitESPComponent::HOLD_PERMANENT;
+      hold_end_time_ = "Permanent";
+      last_activity_ = COMFORT_MANUAL;
+      this->set_custom_preset_(PRESET_HOLD_PERM);
+    }
   }
   if (call.get_target_temperature_low().has_value()) {
     float target_c = call.get_target_temperature_low().value();
@@ -126,6 +132,12 @@ void InfinitESPClimate::control(const climate::ClimateCall &call) {
       parent_->set_zone_setpoint(zone_, heat_sp_, cool_sp_);
     this->target_temperature_low = target_c;
     set_pending_setpoint_(heat_sp_, cool_sp_);
+    if (parent_->itn_empty_sam_zones()) {
+      hold_duration_ = InfinitESPComponent::HOLD_PERMANENT;
+      hold_end_time_ = "Permanent";
+      last_activity_ = COMFORT_MANUAL;
+      this->set_custom_preset_(PRESET_HOLD_PERM);
+    }
   }
 
   if (call.get_target_temperature_high().has_value()) {
@@ -136,6 +148,12 @@ void InfinitESPClimate::control(const climate::ClimateCall &call) {
       parent_->set_zone_setpoint(zone_, heat_sp_, cool_sp_);
     this->target_temperature_high = target_c;
     set_pending_setpoint_(heat_sp_, cool_sp_);
+    if (parent_->itn_empty_sam_zones()) {
+      hold_duration_ = InfinitESPComponent::HOLD_PERMANENT;
+      hold_end_time_ = "Permanent";
+      last_activity_ = COMFORT_MANUAL;
+      this->set_custom_preset_(PRESET_HOLD_PERM);
+    }
   }
 
   if (call.get_fan_mode().has_value()) {
@@ -444,12 +462,17 @@ void InfinitESPClimate::on_register_update(uint8_t device_addr, uint16_t registe
       if (new_heat == 0 || new_cool == 0) {
         uint16_t comfort_reg = comfort_reg_for_zone(zone_);
         auto *comfort = parent_->get_register(ADDR_THERMOSTAT, comfort_reg);
-        if (comfort && comfort->size() >= COMFORT_ENTRY_SIZE) {
-          uint8_t base = COMFORT_HOME * COMFORT_ENTRY_SIZE;
-          if (new_heat == 0)
-            new_heat = (*comfort)[base];
-          if (new_cool == 0)
-            new_cool = (*comfort)[base + 1];
+        if (comfort && comfort->size() >= COMFORT_ACTIVITY_COUNT * COMFORT_ENTRY_SIZE) {
+          uint8_t base_home = COMFORT_HOME * COMFORT_ENTRY_SIZE;
+          uint8_t base_manual = COMFORT_MANUAL * COMFORT_ENTRY_SIZE;
+          if (new_heat == 0) {
+            uint8_t manual = (*comfort)[base_manual];
+            new_heat = (manual >= 40 && manual <= 99) ? manual : (*comfort)[base_home];
+          }
+          if (new_cool == 0) {
+            uint8_t manual = (*comfort)[base_manual + 1];
+            new_cool = (manual >= 40 && manual <= 99) ? manual : (*comfort)[base_home + 1];
+          }
         }
       }
       uint8_t new_fan = data->at(REG3B03_FAN_MODES + idx);
@@ -620,6 +643,10 @@ void InfinitESPClimate::on_register_update(uint8_t device_addr, uint16_t registe
                 case COMFORT_AWAY:  this->set_preset_(climate::CLIMATE_PRESET_AWAY); break;
                 case COMFORT_SLEEP: this->set_preset_(climate::CLIMATE_PRESET_SLEEP); break;
                 case COMFORT_WAKE:  this->set_custom_preset_(PRESET_WAKE); break;
+                case COMFORT_MANUAL:
+                  this->set_custom_preset_(PRESET_HOLD_PERM);
+                  hold_end_time_ = "Permanent";
+                  break;
                 default:
                   this->set_custom_preset_(PRESET_SCHEDULE);
                   break;

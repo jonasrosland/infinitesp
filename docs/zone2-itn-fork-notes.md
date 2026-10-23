@@ -31,6 +31,7 @@ Personal fork of [nebulous/infinitesp](https://github.com/nebulous/infinitesp) w
 - **`041E` decode:** prefer offset **11** before **6** for room temp.
 - **Setpoints:** fill missing heat **or** cool from the zone Home comfort row when SAM `3B03` is empty or partial (e.g. after `Z#HTSP!` only).
 - **Climate mode:** apply global **3B02** mode/stage even when a zone’s room temp is not ready yet (fixes zone 1 stuck on **fan only** while zone 2 showed **heat**).
+- **HA setpoint snapback:** empty **3B03** poll readback no longer clears commanded setpoints or hold state; HA/ASCII edits write the **MANUAL** comfort row and arm a **hold** so values are not replaced by the Home row (66/76). Preset readback treats **MANUAL** as **Hold indefinitely**, not Per schedule.
 - **Comfort profile writes (SAM extensions):**
   - `Z#HOME!heat,cool` — update Home row in table 40 (`400A`+zone−1)
   - `Z#ACT!home|away|sleep|wake|manual` — apply that activity’s setpoints/fan via `3B03` with hold cleared (`hold=0`)

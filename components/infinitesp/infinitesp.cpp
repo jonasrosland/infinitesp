@@ -2033,8 +2033,56 @@ std::string InfinitESPComponent::format_hold_end(uint16_t hold_minutes) const {
   return std::string(buf);
 }
 
+bool InfinitESPComponent::sam_zones_setpoints_unpopulated_(const std::vector<uint8_t> &data) {
+  if (data.size() < REG3B03_COOL_SETPOINTS + 8)
+    return false;
+  for (uint8_t z = 0; z < 8; z++) {
+    if (data[REG3B03_HEAT_SETPOINTS + z] != 0 || data[REG3B03_COOL_SETPOINTS + z] != 0)
+      return false;
+  }
+  return true;
+}
+
+void InfinitESPComponent::merge_sam_zones_preserving_setpoints_(std::vector<uint8_t> &incoming) const {
+  if (incoming.size() < REG3B03_SIZE)
+    return;
+  auto *prev = get_register(sam_address_, REG_SAM_ZONES);
+  if (!prev || prev->size() < REG3B03_SIZE)
+    return;
+  for (uint8_t z = 0; z < 8; z++) {
+    if (incoming[REG3B03_HEAT_SETPOINTS + z] == 0 &&
+        (*prev)[REG3B03_HEAT_SETPOINTS + z] != 0)
+      incoming[REG3B03_HEAT_SETPOINTS + z] = (*prev)[REG3B03_HEAT_SETPOINTS + z];
+    if (incoming[REG3B03_COOL_SETPOINTS + z] == 0 &&
+        (*prev)[REG3B03_COOL_SETPOINTS + z] != 0)
+      incoming[REG3B03_COOL_SETPOINTS + z] = (*prev)[REG3B03_COOL_SETPOINTS + z];
+  }
+  if (incoming.size() >= REG3B03_HOLD_DURATIONS + 16) {
+    bool prev_hold = (*prev)[REG3B03_ZONES_HOLDING] != 0;
+    if (!prev_hold && prev->size() > REG3B03_TIMED_HOLDS)
+      prev_hold = (*prev)[REG3B03_TIMED_HOLDS] != 0;
+    bool incoming_hold = incoming[REG3B03_ZONES_HOLDING] != 0;
+    if (!incoming_hold && incoming.size() > REG3B03_TIMED_HOLDS)
+      incoming_hold = incoming[REG3B03_TIMED_HOLDS] != 0;
+    if (prev_hold && !incoming_hold) {
+      incoming[REG3B03_ZONES_HOLDING] = (*prev)[REG3B03_ZONES_HOLDING];
+      if (incoming.size() > REG3B03_TIMED_HOLDS)
+        incoming[REG3B03_TIMED_HOLDS] = (*prev)[REG3B03_TIMED_HOLDS];
+      for (uint8_t i = 0; i < 16; i++)
+        incoming[REG3B03_HOLD_DURATIONS + i] = (*prev)[REG3B03_HOLD_DURATIONS + i];
+    }
+  }
+}
+
 void InfinitESPComponent::mirror_to_sam_(uint16_t reg_key, const std::vector<uint8_t> &data) {
-  store_register_(sam_address_, reg_key, data);
+  if (reg_key == REG_SAM_ZONES && sam_zones_setpoints_unpopulated_(data)) {
+    itn_empty_sam_zones_ = true;
+    std::vector<uint8_t> merged = data;
+    merge_sam_zones_preserving_setpoints_(merged);
+    store_register_(sam_address_, reg_key, merged);
+  } else {
+    store_register_(sam_address_, reg_key, data);
+  }
   if (reg_key == REG_SAM_STATE || reg_key == REG_SAM_ZONES)
     sam_state_received_ = true;
 }
@@ -2080,6 +2128,36 @@ void InfinitESPComponent::poll_register(uint8_t table, uint8_t row) {
 
 void InfinitESPComponent::set_zone_setpoint(uint8_t zone, uint8_t heat_sp, uint8_t cool_sp) {
   if (!sam_enabled()) return;
+
+  // ITN controls do not serve live 3B03 setpoints to the SAM mirror; HA/ASCII
+  // edits must update table-40 MANUAL and arm a hold or the next empty poll
+  // reverts to the Home row (66/76).
+  if (itn_empty_sam_zones_) {
+    auto *zones_data = get_register(sam_address_, REG_SAM_ZONES);
+    auto *comfort = get_register(ADDR_THERMOSTAT, comfort_reg_for_zone(zone));
+    uint8_t idx = zone - 1;
+    if (heat_sp < 40 && zones_data && zones_data->size() >= REG3B03_HEAT_SETPOINTS + 8)
+      heat_sp = (*zones_data)[REG3B03_HEAT_SETPOINTS + idx];
+    if (cool_sp < 40 && zones_data && zones_data->size() >= REG3B03_COOL_SETPOINTS + 8)
+      cool_sp = (*zones_data)[REG3B03_COOL_SETPOINTS + idx];
+    if (comfort && comfort->size() >= COMFORT_ACTIVITY_COUNT * COMFORT_ENTRY_SIZE) {
+      uint8_t mh = (*comfort)[COMFORT_MANUAL * COMFORT_ENTRY_SIZE];
+      uint8_t mc = (*comfort)[COMFORT_MANUAL * COMFORT_ENTRY_SIZE + 1];
+      uint8_t hh = (*comfort)[COMFORT_HOME * COMFORT_ENTRY_SIZE];
+      uint8_t hc = (*comfort)[COMFORT_HOME * COMFORT_ENTRY_SIZE + 1];
+      if (heat_sp < 40)
+        heat_sp = (mh >= 40 && mh <= 99) ? mh : hh;
+      if (cool_sp < 40)
+        cool_sp = (mc >= 40 && mc <= 99) ? mc : hc;
+    }
+    if (heat_sp >= 40 && cool_sp >= 40) {
+      write_comfort_activity_setpoints(zone, COMFORT_MANUAL, heat_sp, cool_sp);
+      apply_activity(zone, COMFORT_MANUAL, HOLD_PERMANENT);
+      ESP_LOGI("InfinitESP", "Set zone %d via MANUAL row (ITN): heat=%d cool=%d", zone, heat_sp, cool_sp);
+      return;
+    }
+  }
+
   auto *zones_data = get_register(sam_address_, REG_SAM_ZONES);
   if (!zones_data || zones_data->size() < REG3B03_SIZE)
     return;

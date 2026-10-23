@@ -392,11 +392,26 @@ void SamAsciiComponent::process_line_(const std::string &line) {
       return;
     }
 
+    if (write_cmd == "HOMEFAN") {
+      uint8_t new_fan = 0xFF;
+      for (uint8_t i = 0; i < FAN_COUNT; i++) {
+        if (write_val == FAN_NAMES[i]) { new_fan = i; break; }
+      }
+      if (new_fan == 0xFF) { respond_nak_(prefix, "VAL"); return; }
+      parent_->write_comfort_activity_fan(zone, COMFORT_HOME, new_fan);
+      respond_(prefix, "ACK");
+      return;
+    }
+
     if (write_cmd == "ACT") {
       uint8_t activity = 0xFF;
+      uint16_t hold = 0;
       if (write_val == "HOME" || write_val == "home")
         activity = COMFORT_HOME;
-      else if (write_val == "AWAY" || write_val == "away")
+      else if (write_val == "HOMEHOLD" || write_val == "homehold") {
+        activity = COMFORT_HOME;
+        hold = InfinitESPComponent::HOLD_PERMANENT;
+      } else if (write_val == "AWAY" || write_val == "away")
         activity = COMFORT_AWAY;
       else if (write_val == "SLEEP" || write_val == "sleep")
         activity = COMFORT_SLEEP;
@@ -405,7 +420,16 @@ void SamAsciiComponent::process_line_(const std::string &line) {
       else if (write_val == "MANUAL" || write_val == "manual")
         activity = COMFORT_MANUAL;
       if (activity == 0xFF) { respond_nak_(prefix, "VAL"); return; }
-      parent_->apply_activity(zone, activity, 0);
+      parent_->apply_activity(zone, activity, hold);
+      // Keep Manual row aligned with Home so HA/ITN readback does not re-latch 76° Manual.
+      if (activity == COMFORT_HOME && hold >= InfinitESPComponent::HOLD_PERMANENT) {
+        auto *row = parent_->get_register(ADDR_THERMOSTAT, comfort_reg_for_zone(zone));
+        if (row && row->size() >= COMFORT_ACTIVITY_COUNT * COMFORT_ENTRY_SIZE) {
+          uint8_t base = COMFORT_HOME * COMFORT_ENTRY_SIZE;
+          parent_->write_comfort_activity_setpoints(zone, COMFORT_MANUAL, (*row)[base], (*row)[base + 1]);
+          parent_->write_comfort_activity_fan(zone, COMFORT_MANUAL, (*row)[base + 2]);
+        }
+      }
       respond_(prefix, "ACK");
       return;
     }

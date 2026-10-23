@@ -755,6 +755,7 @@ class InfinitESPComponent : public Component, public uart::UARTDevice {
   // comfort_byte_to_celsius for °C bus encoding (not used for arbitrary °F edits).
   void write_comfort_activity_setpoints(uint8_t zone, uint8_t activity_index, uint8_t heat_sp,
                                         uint8_t cool_sp);
+  void write_comfort_activity_fan(uint8_t zone, uint8_t activity_index, uint8_t fan_mode);
 
   // One-shot poll of a specific thermostat register (for discovery / debugging)
   void poll_register(uint8_t table, uint8_t row);

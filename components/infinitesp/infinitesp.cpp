@@ -2231,6 +2231,31 @@ void InfinitESPComponent::write_comfort_activity_setpoints(uint8_t zone, uint8_t
            zone, act_names[activity_index], heat_sp, cool_sp, reg);
 }
 
+void InfinitESPComponent::write_comfort_activity_fan(uint8_t zone, uint8_t activity_index,
+                                                     uint8_t fan_mode) {
+  if (!sam_enabled())
+    return;
+  if (activity_index >= COMFORT_ACTIVITY_COUNT || fan_mode > FAN_HIGH)
+    return;
+  auto *row = get_register(ADDR_THERMOSTAT, comfort_reg_for_zone(zone));
+  if (!row || row->size() < COMFORT_ACTIVITY_COUNT * COMFORT_ENTRY_SIZE)
+    return;
+
+  std::vector<uint8_t> new_row = *row;
+  uint8_t base = activity_index * COMFORT_ENTRY_SIZE;
+  new_row[base + 2] = fan_mode;
+
+  uint16_t reg = comfort_reg_for_zone(zone);
+  std::vector<uint8_t> payload = {0x00, (uint8_t) (reg >> 8), (uint8_t) (reg & 0xFF)};
+  payload.insert(payload.end(), new_row.begin(), new_row.end());
+  send_write_frame_(ADDR_THERMOSTAT, 0x01, payload);
+  store_register_(ADDR_THERMOSTAT, reg, new_row);
+
+  static const char *act_names[] = {"home", "away", "sleep", "wake", "manual"};
+  ESP_LOGI("InfinitESP", "Zone %u comfort %s fan=%u (reg %04X write queued)", zone,
+           act_names[activity_index], fan_mode, reg);
+}
+
 bool InfinitESPComponent::command_setpoint_half(uint8_t zone, bool is_heat, float target_c) {
   // Half-degree °C write (issue #49). See the header comment for the
   // live-verified recipe and the three experiments behind it (2026-10-13).

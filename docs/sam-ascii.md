@@ -101,11 +101,24 @@ thermostat table-40 comfort row (`400A`+zone−1) or apply an activity when SAM
 
 ```
 Z1HOME!66,76         # Set zone 1 Home profile heat/cool (°F)
-Z2ACT!home           # Apply Home setpoints+fan; cancel hold (hold=0)
+Z1HOMEFAN!AUTO       # Set zone 1 Home profile fan (AUTO/LOW/MED/HIGH)
+Z1ACT!home           # Apply Home setpoints+fan; cancel hold (hold=0)
+Z1ACT!homehold       # Apply Home + permanent hold; sync Manual row to Home
+Z1FAN!AUTO           # Live zone fan via 3B03 (use when wall/HA must change now)
 ```
 
-`Z#ACT!` accepts `home`, `away`, `sleep`, `wake`, or `manual` (case-insensitive).
-ACK reflects the bus write being queued, same as other set commands.
+| Command | Effect |
+|---------|--------|
+| `Z#HOME!h,c` | Writes heat/cool bytes in the zone’s **Home** activity (`400A`+zone−1). |
+| `Z#HOMEFAN!mode` | Writes fan byte in **Home** (`AUTO` / `LOW` / `MED` / `HIGH` → 0–3). |
+| `Z#ACT!home` | Applies **Home** setpoints+fan to the stat; **clears** hold. |
+| `Z#ACT!homehold` | Applies **Home** and **permanent hold**; copies Home → **Manual** row so ITN/HA readback does not re-latch an old Manual setpoint (e.g. 76° from a prior HA edit). |
+| `Z#ACT!…` | Also: `away`, `sleep`, `wake`, `manual` (case-insensitive). |
+| `Z#HTSP!` / `Z#CLSP!` | Live setpoint via `3B03`; on ITN, prefer `HOME!` + `ACT!` / `homehold` for profile edits. |
+
+ACK reflects the bus write being queued, same as other set commands. On ITN,
+`Z#HTSP?` / `Z#FAN?` may still read **AUTO** or **0°F** when SAM `3B03` is
+empty; use `REPORT?` **400A**/**400B** rows or comfort profile sensors for profile bytes.
 
 ### Clock verbs
 

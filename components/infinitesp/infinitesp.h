@@ -750,6 +750,12 @@ class InfinitESPComponent : public Component, public uart::UARTDevice {
   // comfort row (400A+zone-1) and sets hold
   void apply_activity(uint8_t zone, uint8_t activity_index, uint16_t hold_duration);
 
+  // Update one activity's heat/cool bytes in the zone comfort row (400A+zone-1)
+  // and push a table-40 write to the thermostat. Whole °F on °F buses; see
+  // comfort_byte_to_celsius for °C bus encoding (not used for arbitrary °F edits).
+  void write_comfort_activity_setpoints(uint8_t zone, uint8_t activity_index, uint8_t heat_sp,
+                                        uint8_t cool_sp);
+
   // One-shot poll of a specific thermostat register (for discovery / debugging)
   void poll_register(uint8_t table, uint8_t row);
 

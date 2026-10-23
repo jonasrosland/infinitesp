@@ -93,6 +93,20 @@ Z1HOLD!on            # Permanent hold
 Z1HOLD!off           # Cancel hold, resume schedule
 ```
 
+### InfinitESP extensions (comfort profile / ITN)
+
+These verbs are **InfinitESP-only** (not on a physical SAM01). They write the
+thermostat table-40 comfort row (`400A`+zone−1) or apply an activity when SAM
+`3B03` readback is empty (common on Next Gen ITN controls):
+
+```
+Z1HOME!66,76         # Set zone 1 Home profile heat/cool (°F)
+Z2ACT!home           # Apply Home setpoints+fan; cancel hold (hold=0)
+```
+
+`Z#ACT!` accepts `home`, `away`, `sleep`, `wake`, or `manual` (case-insensitive).
+ACK reflects the bus write being queued, same as other set commands.
+
 ### Clock verbs
 
 `TIME!` mimics the physical SAM's verb: 12-hour `HH:MM` plus `A`/`P`, leading

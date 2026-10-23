@@ -340,15 +340,6 @@ void InfinitESPClimate::on_register_update(uint8_t device_addr, uint16_t registe
       if (!parent_->zone_is_active(zone_))
         return;
 
-      float temp = parent_->zone_room_temp_c_(zone_);
-      if (std::isnan(temp))
-        return;
-      if (temp != current_temp_) {
-        current_temp_ = temp;
-        this->current_temperature = temp;
-        changed = true;
-      }
-
       uint8_t stagmode = data->at(REG3B02_STAGMODE);
       uint8_t mode = stagmode & 0x0F;
       uint8_t stage = (stagmode >> 4) & 0x0F;
@@ -426,6 +417,16 @@ void InfinitESPClimate::on_register_update(uint8_t device_addr, uint16_t registe
         this->target_temperature_high = cool_c;
         changed = true;
       }
+
+      // Room temp is per-zone and may come from 3D02/041E after 3B02; never skip
+      // global mode/stage handling when temp is not ready yet (ITN zone 1).
+      float temp = parent_->zone_room_temp_c_(zone_);
+      if (!std::isnan(temp) && temp != current_temp_) {
+        current_temp_ = temp;
+        this->current_temperature = temp;
+        changed = true;
+        compute_action_();
+      }
     }
   }
 
@@ -438,13 +439,17 @@ void InfinitESPClimate::on_register_update(uint8_t device_addr, uint16_t registe
 
       uint8_t new_heat = data->at(REG3B03_HEAT_SETPOINTS + idx);
       uint8_t new_cool = data->at(REG3B03_COOL_SETPOINTS + idx);
-      if (new_heat == 0 && new_cool == 0) {
+      // Next Gen ITN often leaves SAM 3B03 empty; a partial write (HTSP only) can
+      // leave heat set with cool still 0 — fill any missing bound from Home row.
+      if (new_heat == 0 || new_cool == 0) {
         uint16_t comfort_reg = comfort_reg_for_zone(zone_);
         auto *comfort = parent_->get_register(ADDR_THERMOSTAT, comfort_reg);
         if (comfort && comfort->size() >= COMFORT_ENTRY_SIZE) {
           uint8_t base = COMFORT_HOME * COMFORT_ENTRY_SIZE;
-          new_heat = (*comfort)[base];
-          new_cool = (*comfort)[base + 1];
+          if (new_heat == 0)
+            new_heat = (*comfort)[base];
+          if (new_cool == 0)
+            new_cool = (*comfort)[base + 1];
         }
       }
       uint8_t new_fan = data->at(REG3B03_FAN_MODES + idx);
@@ -645,15 +650,18 @@ void InfinitESPClimate::on_register_update(uint8_t device_addr, uint16_t registe
       current_temp_ = temp;
       this->current_temperature = temp;
       changed = true;
+      compute_action_();
     }
   }
 
   if (register_key == comfort_reg_for_zone(zone_)) {
     auto *comfort = parent_->get_register(ADDR_THERMOSTAT, register_key);
-    if (comfort && comfort->size() >= COMFORT_ENTRY_SIZE && heat_sp_ == 0 && cool_sp_ == 0) {
+    if (comfort && comfort->size() >= COMFORT_ENTRY_SIZE && (heat_sp_ == 0 || cool_sp_ == 0)) {
       uint8_t base = COMFORT_HOME * COMFORT_ENTRY_SIZE;
-      heat_sp_ = (*comfort)[base];
-      cool_sp_ = (*comfort)[base + 1];
+      if (heat_sp_ == 0)
+        heat_sp_ = (*comfort)[base];
+      if (cool_sp_ == 0)
+        cool_sp_ = (*comfort)[base + 1];
       this->target_temperature_low = parent_->setpoint_to_celsius(heat_sp_);
       this->target_temperature_high = parent_->setpoint_to_celsius(cool_sp_);
       changed = true;

@@ -1924,9 +1924,10 @@ float InfinitESPComponent::aux_zone_temp_c_(uint8_t zone) const {
       return NAN;
     return (float) b;
   };
-  // ITN01 + Smart Sensor 041E layout (live 0x22): room temp is a whole °F at
-  // offset 6 (and often repeated at 11). Byte 10 is the cool setpoint (0x62).
-  static const uint8_t kAuxWholeTempOff[] = {6, 11, 5, 10};
+  // ITN01 + Smart Sensor 041E layout (live 0x22): room temp whole °F at offset
+  // 11 (and sometimes 6). Bytes 6–7 often carry heat/cool setpoints — when Home
+  // heat equals byte 6, reading 6 first falsely reports the setpoint as room temp.
+  static const uint8_t kAuxWholeTempOff[] = {11, 6, 5};
   float f = NAN;
   for (uint8_t off : kAuxWholeTempOff) {
     f = whole_f(off);
@@ -2124,6 +2125,32 @@ void InfinitESPComponent::set_zone_setpoint(uint8_t zone, uint8_t heat_sp, uint8
            payload.size() > 4 ? payload[4] : 0, payload.size() > 5 ? payload[5] : 0,
            payload.size() > 6 ? payload[6] : 0, payload.size() > 7 ? payload[7] : 0,
            payload.size() > 8 ? payload[8] : 0, payload.size() > 9 ? payload[9] : 0);
+}
+
+void InfinitESPComponent::write_comfort_activity_setpoints(uint8_t zone, uint8_t activity_index,
+                                                           uint8_t heat_sp, uint8_t cool_sp) {
+  if (!sam_enabled())
+    return;
+  if (activity_index >= COMFORT_ACTIVITY_COUNT)
+    return;
+  auto *row = get_register(ADDR_THERMOSTAT, comfort_reg_for_zone(zone));
+  if (!row || row->size() < COMFORT_ACTIVITY_COUNT * COMFORT_ENTRY_SIZE)
+    return;
+
+  std::vector<uint8_t> new_row = *row;
+  uint8_t base = activity_index * COMFORT_ENTRY_SIZE;
+  new_row[base] = heat_sp;
+  new_row[base + 1] = cool_sp;
+
+  uint16_t reg = comfort_reg_for_zone(zone);
+  std::vector<uint8_t> payload = {0x00, (uint8_t) (reg >> 8), (uint8_t) (reg & 0xFF)};
+  payload.insert(payload.end(), new_row.begin(), new_row.end());
+  send_write_frame_(ADDR_THERMOSTAT, 0x01, payload);
+  store_register_(ADDR_THERMOSTAT, reg, new_row);
+
+  static const char *act_names[] = {"home", "away", "sleep", "wake", "manual"};
+  ESP_LOGI("InfinitESP", "Zone %u comfort %s: heat=%u cool=%u (reg %04X write queued)",
+           zone, act_names[activity_index], heat_sp, cool_sp, reg);
 }
 
 bool InfinitESPComponent::command_setpoint_half(uint8_t zone, bool is_heat, float target_c) {

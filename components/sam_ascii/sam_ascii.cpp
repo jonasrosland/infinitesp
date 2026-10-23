@@ -377,6 +377,39 @@ void SamAsciiComponent::process_line_(const std::string &line) {
       return;
     }
 
+    // Comfort profile: Z#HOME!heat,cool updates the Home row (400A+zone-1).
+    // Z#ACT!home|away|sleep|wake|manual applies that row's setpoints+fan via
+    // 3B03 (hold duration 0 = cancel hold). InfinitESP extensions for ITN
+    // installs where SAM 3B03 readback is empty but table 40 is populated.
+    if (write_cmd == "HOME") {
+      size_t comma = write_val.find(',');
+      if (comma == std::string::npos) { respond_nak_(prefix, "VAL"); return; }
+      int heat = atoi(write_val.substr(0, comma).c_str());
+      int cool = atoi(write_val.substr(comma + 1).c_str());
+      if (heat < 40 || heat > 99 || cool < 40 || cool > 99) { respond_nak_(prefix, "VAL"); return; }
+      parent_->write_comfort_activity_setpoints(zone, COMFORT_HOME, (uint8_t) heat, (uint8_t) cool);
+      respond_(prefix, "ACK");
+      return;
+    }
+
+    if (write_cmd == "ACT") {
+      uint8_t activity = 0xFF;
+      if (write_val == "HOME" || write_val == "home")
+        activity = COMFORT_HOME;
+      else if (write_val == "AWAY" || write_val == "away")
+        activity = COMFORT_AWAY;
+      else if (write_val == "SLEEP" || write_val == "sleep")
+        activity = COMFORT_SLEEP;
+      else if (write_val == "WAKE" || write_val == "wake")
+        activity = COMFORT_WAKE;
+      else if (write_val == "MANUAL" || write_val == "manual")
+        activity = COMFORT_MANUAL;
+      if (activity == 0xFF) { respond_nak_(prefix, "VAL"); return; }
+      parent_->apply_activity(zone, activity, 0);
+      respond_(prefix, "ACK");
+      return;
+    }
+
     // ---- Vacation writes (3B04) ----
     if (write_cmd == "VACDAYS") {
       int days = atoi(write_val.c_str());
